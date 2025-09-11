@@ -5,3 +5,9 @@ scikit-learn
 joblib
 matplotlib
 seaborn
+streamlit
+pandas
+joblib
+matplotlib
+numpy
+openpyxl
