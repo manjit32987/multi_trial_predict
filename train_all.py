@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.preprocessing import LabelEncoder
 
-# ========== Step 1: Load both Excel files ==========
+# ========== Step 1: Load Excel files ==========
 file1 = "ceirrus.xlsx"
 file2 = "subtallis.xlsx"
 
@@ -40,22 +40,27 @@ encoders = {}
 for target in data.columns:
     print(f"\n🔹 Training model for target: {target}")
 
+    # Skip non-trainable columns (empty or constant)
+    if data[target].isna().all() or data[target].nunique() <= 1:
+        print(f"⚠️ Skipping {target} (empty or constant column)")
+        continue
+
     X = data.drop(columns=[target])
     y = data[target]
 
-    # Handle missing values in features
+    # Fill missing values in features
     X = X.fillna(0)
 
-    # Handle target values
+    # Fill missing values in target
     if y.isnull().any():
         if y.dtype == "object":
             y = y.fillna("missing")
         else:
             y = y.fillna(y.mean())
 
-    # Mixed type fix: force uniform type
+    # Determine if target is categorical
     if y.dtype == "object" or y.apply(lambda v: isinstance(v, str)).any():
-        y = y.astype(str)  # force to string
+        y = y.astype(str)
         le = LabelEncoder()
         y = le.fit_transform(y)
         encoders[target] = le
@@ -70,18 +75,21 @@ for target in data.columns:
             X, y, test_size=0.2, random_state=42
         )
     except ValueError as e:
-        print(f"⚠️ Skipping {target} (error: {e})")
+        print(f"⚠️ Skipping {target} (train/test split error: {e})")
         continue
 
     # Train model
     model.fit(X_train, y_train)
 
     # Save model
-    safe_target = str(target).replace("/", "_").replace("\\", "_").replace(" ", "_")
+    safe_target = str(target).replace("/", "_").replace("\\", "_").replace(" ", "_").replace("(", "").replace(")", "")
     model_filename = f"models/{safe_target}_model.pkl"
     joblib.dump(model, model_filename)
     print(f"✅ Saved {target} model → {model_filename}")
 
-# Save encoders
-joblib.dump(encoders, "models/encoders.pkl")
-print("\n🎉 Training complete! All models + encoders saved in 'models/' folder.")
+# Save encoders if any
+if encoders:
+    joblib.dump(encoders, "models/encoders.pkl")
+    print("✅ Saved encoders → models/encoders.pkl")
+
+print("\n Training complete! All models + encoders saved in 'models/' folder.")

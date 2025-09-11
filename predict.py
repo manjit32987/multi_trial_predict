@@ -1,37 +1,72 @@
-import joblib
 import pandas as pd
+import joblib
+import os
 
-# Load encoders
-encoders = joblib.load("models/encoders.pkl")
+# ========== Step 1: Load new data from two files ==========
+file1 = "ceirrus.xlsx"
+file2 = "subtallis.xlsx"
 
-def load_model(target):
-    safe_name = target.replace("/", "_").replace(" ", "_").replace("(", "").replace(")", "")
-    return joblib.load(f"models/{safe_name}_model.pkl")
+df1 = pd.read_excel(file1)
+df2 = pd.read_excel(file2)
 
-# Example input (user can change this)
-sample = {
-    "Initial Crack Width (mm)": 0.7,
-    "Final Crack Width (mm)": 0.3,
-    "Healing Efficiency (%)": 65,
-    "Species": "Bacillus subtilis",
-    "Concentration (cells/ml)": 1e7,
-    "Age": 28
-}
+# Align columns
+if not df1.columns.equals(df2.columns):
+    print("⚠️ Columns differ. Aligning columns before merging...")
+    all_cols = sorted(set(df1.columns).union(set(df2.columns)))
+    df1 = df1.reindex(columns=all_cols)
+    df2 = df2.reindex(columns=all_cols)
 
-# Choose target to predict
-target = "Species"   # Change to "Concentration (cells/ml)" or "Age"
+# Merge datasets
+df_new = pd.concat([df1, df2], ignore_index=True)
+print(f"📊 New data shape: {df_new.shape}")
 
-# Prepare input
-X = pd.DataFrame([sample]).drop(columns=[target])
+# ========== Step 2: Load models and encoders ==========
+models_folder = "models"
+model_files = [f for f in os.listdir(models_folder) if f.endswith("_model.pkl")]
+encoders_file = os.path.join(models_folder, "encoders.pkl")
 
-# Load model
-model = load_model(target)
+# Load encoders if they exist
+encoders = joblib.load(encoders_file) if os.path.exists(encoders_file) else {}
 
-# Predict
-y_pred = model.predict(X)
+# Load models
+models = {}
+for mf in model_files:
+    safe_name = mf.replace("_model.pkl", "")
+    model_path = os.path.join(models_folder, mf)
+    models[safe_name] = joblib.load(model_path)
+    print(f"✅ Loaded model for: {safe_name}")
 
-# Decode if categorical
-if target in encoders:
-    y_pred = encoders[target].inverse_transform(y_pred)
+# ========== Step 3: Make predictions ==========
+predictions = pd.DataFrame(index=df_new.index)
 
-print(f"\n🎯 Predicted {target}: {y_pred[0]}")
+for target, model in models.items():
+    print(f"\n🔹 Predicting: {target}")
+
+    X = df_new.copy()
+
+    # Drop target column if it exists
+    if target in X.columns:
+        X = X.drop(columns=[target])
+
+    # Keep only columns present in training data
+    model_features = model.feature_names_in_
+    X = X.reindex(columns=model_features, fill_value=0)
+
+    # Predict
+    preds = model.predict(X)
+
+    # Decode if categorical
+    if target in encoders:
+        le = encoders[target]
+        preds = le.inverse_transform(preds.astype(int))
+
+    predictions[target] = preds
+
+# ========== Step 4: Output predictions ==========
+print("\n🎯 Predictions:")
+print(predictions)
+
+# Save predictions
+output_file = "predictions.csv"
+predictions.to_csv(output_file, index=False)
+print(f"\n✅ Predictions saved → {output_file}")
