@@ -35,60 +35,72 @@ def load_model(target):
         return None
 
 # =============================
-# Load dataset (to know columns)
+# Load and merge datasets
 # =============================
 files = ["ceirrus.xlsx", "subtallis.xlsx"]
-dfs = [pd.read_excel(f) for f in files if os.path.exists(f)]
+dfs = []
+
+for file in files:
+    if os.path.exists(file):
+        df = pd.read_excel(file)
+        df.columns = df.columns.str.strip().str.title()  # Normalize columns
+        df["Source_File"] = os.path.basename(file)
+        dfs.append(df)
 
 if dfs:
     data = pd.concat(dfs, axis=0, ignore_index=True)
-    st.success(f"📂 Loaded dataset with {len(data)} rows and {len(data.columns)} columns.")
+    st.success(f"📂 Loaded {len(dfs)} files → {len(data)} total rows, {len(data.columns)} columns.")
+    st.write("✅ **Preview of combined dataset:**")
+    st.dataframe(data.head())
 else:
-    st.error("❌ No dataset found. Please place Excel files in the project folder.")
+    st.error("❌ No dataset found. Please ensure Excel files are in the same folder as app.py.")
     st.stop()
 
 all_columns = data.columns.tolist()
 
-# Filter only columns that have a trained model for targets
+# =============================
+# Detect which columns have models
+# =============================
 model_files = os.listdir("models")
-trained_targets = [f.replace("_model.pkl", "").replace("_", " ") for f in model_files if f.endswith("_model.pkl")]
+trained_targets = [
+    f.replace("_model.pkl", "").replace("_", " ") 
+    for f in model_files if f.endswith("_model.pkl")
+]
 
 # =============================
-# Streamlit UI
+# Streamlit UI for feature selection
 # =============================
-st.write("Select which features to use as input and which to predict.")
+st.write("### ⚙️ Select Features")
 
 input_features = st.multiselect(
     "Select input features:",
-    all_columns,
-    default=[c for c in all_columns if c not in trained_targets][:3],  # default first 3
+    [c for c in all_columns if c not in trained_targets and c != "Source_File"],
+    default=[c for c in all_columns if c not in trained_targets and c != "Source_File"][:3],
 )
 
-# Only allow predicting columns that actually have models
 target_features = st.multiselect(
     "Select target features to predict:",
     [c for c in trained_targets if c not in input_features],
     default=[c for c in trained_targets if c not in input_features][:2],
 )
 
-# Collect inputs dynamically
+# =============================
+# Collect input sample dynamically
+# =============================
 sample = {}
 for col in input_features:
     if data[col].dtype == "object":
-        # Categorical input
         sample[col] = st.selectbox(f"Select {col}:", sorted(data[col].dropna().unique()))
     elif pd.api.types.is_integer_dtype(data[col]):
-        # Integer input
         sample[col] = st.number_input(f"Enter {col}:", value=int(data[col].mean()), step=1)
     else:
-        # Float input
         sample[col] = st.number_input(f"Enter {col}:", value=float(data[col].mean()))
 
 # =============================
-# Run Prediction
+# Run Predictions
 # =============================
 if st.button("🔮 Predict"):
-    st.subheader("Prediction Results")
+    st.subheader("🎯 Prediction Results")
 
     results = {}
     numeric_results = {}
@@ -96,7 +108,6 @@ if st.button("🔮 Predict"):
     for target in target_features:
         X = pd.DataFrame([sample])
 
-        # drop target col if mistakenly included
         if target in X.columns:
             X = X.drop(columns=[target])
 
@@ -104,7 +115,7 @@ if st.button("🔮 Predict"):
         if model is None:
             continue
 
-        # Reindex features to match training
+        # Align columns to training model
         model_features = model.feature_names_in_
         X = X.reindex(columns=model_features, fill_value=0)
 
@@ -118,19 +129,42 @@ if st.button("🔮 Predict"):
         pred_value = pred[0]
         results[target] = pred_value
 
-        # Store numeric separately for plotting
+        # Store numeric values for visualization
         if isinstance(pred_value, (int, float, np.integer, np.floating)):
             numeric_results[target] = float(pred_value)
 
         st.write(f"**{target} →** {pred_value}")
 
     # =============================
-    # Visualization
+    # Combined Visualization
     # =============================
-    if numeric_results:
-        st.subheader("📊 Numeric Prediction Visualization")
-        fig, ax = plt.subplots()
-        ax.bar(numeric_results.keys(), numeric_results.values(), color="skyblue")
-        ax.set_ylabel("Predicted Value")
-        ax.set_title("Numeric Prediction Results")
+    st.subheader("📊 Input vs Predicted Visualization")
+
+    input_numeric = {
+        k: v for k, v in sample.items()
+        if isinstance(v, (int, float, np.integer, np.floating))
+    }
+    combined_data = {**input_numeric, **numeric_results}
+
+    if combined_data:
+        fig, ax = plt.subplots(figsize=(8, 5))
+        colors = [
+            "lightgreen" if k in input_numeric else "skyblue"
+            for k in combined_data.keys()
+        ]
+        bars = ax.bar(combined_data.keys(), combined_data.values(), color=colors)
+        ax.set_ylabel("Value")
+        ax.set_title("Input Features (Green) vs Predicted Outputs (Blue)")
+
+        # Value labels
+        for bar in bars:
+            yval = bar.get_height()
+            ax.text(
+                bar.get_x() + bar.get_width()/2, yval,
+                f"{yval:.2f}", ha='center', va='bottom', fontsize=9
+            )
+
+        plt.xticks(rotation=45, ha="right")
         st.pyplot(fig)
+    else:
+        st.info("No numeric data available for visualization.")
